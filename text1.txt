@@ -1,0 +1,7 @@
+/netlify
+  /functions
+    login.js         # serverless function (Puppeteer)
+/public
+  index.html         # frontend UI
+netlify.toml
+package.json

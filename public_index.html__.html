@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Instagram Cookie Extractor | Netlify</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #0b0b0b;
+      font-family: system-ui, sans-serif;
+      color: #e0e0e0;
+      display: flex;
+      justify-content: center;
+      padding: 2rem;
+    }
+    .container {
+      width: 100%;
+      max-width: 700px;
+      background: #141414;
+      border-radius: 20px;
+      padding: 2rem;
+      border: 1px solid #2a2a2a;
+    }
+    h1 { font-size: 1.8rem; margin-bottom: 0.5rem; color: #f09433; }
+    .sub { color: #777; margin-bottom: 2rem; }
+    textarea, input {
+      width: 100%;
+      background: #1e1e1e;
+      border: 1px solid #333;
+      border-radius: 10px;
+      padding: 12px;
+      color: #fff;
+      font-size: 0.9rem;
+      margin-bottom: 1rem;
+      resize: vertical;
+    }
+    button {
+      background: linear-gradient(135deg, #f09433, #e6683c);
+      color: white;
+      border: none;
+      padding: 12px 24px;
+      border-radius: 30px;
+      font-weight: bold;
+      cursor: pointer;
+      font-size: 1rem;
+    }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .log {
+      background: #0a0a0a;
+      border: 1px solid #222;
+      border-radius: 10px;
+      padding: 15px;
+      height: 200px;
+      overflow-y: auto;
+      font-family: monospace;
+      font-size: 0.8rem;
+      margin: 1rem 0;
+    }
+    .progress { height: 6px; background: #222; border-radius: 3px; margin: 10px 0; overflow: hidden; }
+    .progress-fill { height: 100%; width: 0%; background: #e6683c; transition: width 0.3s; }
+    .download-btn { background: #1f3d2c; margin-right: 10px; }
+  </style>
+</head>
+<body>
+<div class="container">
+  <h1>🔐 Instagram Cookie Extractor</h1>
+  <p class="sub">Netlify serverless · Auto login + 2FA TOTP support</p>
+
+  <label>👥 Usernames (one per line, up to 1000)</label>
+  <textarea id="users" rows="5" placeholder="user1&#10;user2&#10;user3"></textarea>
+
+  <label>🔑 Common Password</label>
+  <input type="text" id="password" placeholder="YourPassword123">
+
+  <label>🛡️ 2FA Secrets (one per line, same order)</label>
+  <textarea id="twofa" rows="3" placeholder="JBSWY3DPEHPK3PXP&#10;..."></textarea>
+
+  <div style="display: flex; gap: 10px; margin: 1rem 0;">
+    <button id="startBtn">▶ Start Extraction</button>
+    <button id="stopBtn" style="background:#a53f3f;">⏹ Stop</button>
+  </div>
+
+  <div class="progress">
+    <div class="progress-fill" id="progressFill"></div>
+  </div>
+  <div style="margin-bottom: 10px;">
+    <span id="status">⚪ Ready</span> &nbsp;
+    <span id="counter">0/0</span>
+  </div>
+
+  <div class="log" id="log"></div>
+
+  <button id="dlSuccess" class="download-btn">⬇️ Download Success</button>
+  <button id="dlFailed" class="download-btn">⬇️ Download Failed</button>
+</div>
+
+<script>
+  const API = '/.netlify/functions/login'; // Netlify function endpoint
+
+  let users = [], twofaSecrets = [], password = '';
+  let successList = [], failedList = [];
+  let running = false, stopFlag = false, currentIdx = 0;
+
+  const $ = id => document.getElementById(id);
+  const log = (msg, type='info') => {
+    const time = new Date().toLocaleTimeString();
+    const color = type==='success'?'#2ecc71':type==='error'?'#e74c3c':'#aaa';
+    $('log').innerHTML += `<div style="color:${color}">[${time}] ${msg}</div>`;
+    $('log').scrollTop = $('log').scrollHeight;
+  };
+
+  function updateUI() {
+    const total = users.length;
+    const done = successList.length + failedList.length;
+    $('counter').textContent = `${done}/${total}`;
+    $('progressFill').style.width = total ? `${(done/total)*100}%` : '0%';
+  }
+
+  async function processAccount(username, secret) {
+    try {
+      log(`Logging in: ${username}...`);
+      const res = await fetch(API, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password, twofaSecret: secret }),
+      });
+      const data = await res.json();
+      if (data.success && data.cookies) {
+        successList.push({ username, password, cookies: data.cookies });
+        log(`✅ ${username} - Success`, 'success');
+      } else {
+        throw new Error(data.error || 'Unknown error');
+      }
+    } catch (e) {
+      failedList.push(username);
+      log(`❌ ${username} - ${e.message}`, 'error');
+    }
+  }
+
+  async function start() {
+    users = $('users').value.trim().split('\n').map(s => s.trim()).filter(Boolean);
+    password = $('password').value.trim();
+    twofaSecrets = $('twofa').value.trim().split('\n').map(s => s.trim()).filter(Boolean);
+    if (users.length === 0 || !password) return alert('Username and password required');
+    while (twofaSecrets.length < users.length) twofaSecrets.push('');
+
+    running = true; stopFlag = false;
+    $('startBtn').disabled = true;
+    successList = []; failedList = [];
+    currentIdx = 0;
+    updateUI();
+    log('🚀 Started extraction', 'info');
+
+    for (let i = 0; i < users.length; i++) {
+      if (stopFlag) { log('⏹ Stopped by user'); break; }
+      $('status').innerHTML = `🟡 Processing ${users[i]}`;
+      await processAccount(users[i], twofaSecrets[i]);
+      currentIdx = i+1;
+      updateUI();
+    }
+    running = false;
+    $('startBtn').disabled = false;
+    $('status').innerHTML = '🟢 Finished';
+    log('🏁 Done');
+  }
+
+  $('startBtn').addEventListener('click', start);
+  $('stopBtn').addEventListener('click', () => { stopFlag = true; });
+
+  $('dlSuccess').addEventListener('click', () => {
+    if (!successList.length) return alert('No successful accounts');
+    let content = successList.map(a => `${a.username}|${a.password}|${a.cookies}`).join('\n');
+    download('instagram_success.txt', content);
+  });
+
+  $('dlFailed').addEventListener('click', () => {
+    if (!failedList.length) return alert('No failed accounts');
+    download('instagram_failed.txt', failedList.join('\n'));
+  });
+
+  function download(filename, text) {
+    const blob = new Blob([text], {type: 'text/plain'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    a.click();
+  }
+</script>
+</body>
+</html>

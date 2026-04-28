@@ -1,0 +1,10 @@
+[build]
+  command = "npm install"
+  functions = "netlify/functions"
+  publish = "public"
+
+[functions]
+  node_bundler = "esbuild"
+
+[functions.login]
+  timeout = 30  # seconds (max for sync functions)
